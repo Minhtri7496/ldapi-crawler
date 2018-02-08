@@ -72,20 +72,22 @@ def crawl_register(register_uri):
         # if there is another page, load that
         p = get_next_page_uri(g)
         while p:
+            #
             # length limiter for testing
-            if len(URIS) > 1000:
+            #
+            if len(URIS) > 200:
                 break
-            g = crawl_page(p)
+            g = crawl_register_page(p)
             p = get_next_page_uri(g)
 
 
-def crawl_page(page_uri):
-    g = get_graph_from_uri(page_uri)
+def crawl_register_page(register_page_uri):
+    g = get_graph_from_uri(register_page_uri)
     start_length = len(URIS)
     URIS.extend(get_contained_item_class_uris(g))
     end_length = len(URIS)
 
-    print('Added {} URIs to the list from Page {}'.format(end_length - start_length, page_uri))
+    print('Added {} URIs to the list from Page {}'.format(end_length - start_length, register_page_uri))
     return g
 
 
@@ -96,4 +98,9 @@ if __name__ == '__main__':
 
     print(URIS[:10])
 
+    # for each URI in URIs, get it's RDF
+    master_graph = rdflib.Graph()
+    for uri in URIS:
+        master_graph += get_graph_from_uri(uri)
 
+        print(len(master_graph))
