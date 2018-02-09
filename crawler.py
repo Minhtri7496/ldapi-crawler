@@ -1,8 +1,8 @@
-import sys
 import logging
 import requests
 import requests.exceptions
 import rdflib
+import argparse
 
 
 # stores the URIs for each containedItemClass to be harvested
@@ -30,6 +30,7 @@ def get_contained_item_class_uris(g):
             ?reg reg:containedItemClass ?containedItemClass .
             ?uri a ?containedItemClass .
         }
+        ORDER BY ?uri
     '''
     for r in g.query(q):
         yield str(r['uri'])
@@ -94,16 +95,14 @@ def crawl_register_page(register_page_uri):
     return g
 
 
-def post_triples_to_triplestore(g, post_uri):
+def post_triples_to_sparql_endpoint(g, post_uri, session):
     ntriples = g.serialize(format='ntriples')
     sparql_insert = 'INSERT DATA\n{{\n{}}}'.format(
         '\n'.join(['\t' + line for line in ntriples.decode('utf-8').splitlines()]))  # nice SPARQL formatting
 
     # POST the SPARQL to the Fuseki endpoint
-    auth = (None, None)
-    headers = {'Accept': 'text/turtle'}
     try:
-        r = requests.post(post_uri, headers=headers, data=sparql_insert, auth=auth, timeout=1)
+        r = session.post(post_uri, data=sparql_insert, timeout=1)
         if 200 > r.status_code > 300:
             print(r.status_code)
             m = 'The INSERT was not successful. The SPARQL _database\' error message is: {}'.format(r.content)
@@ -112,19 +111,62 @@ def post_triples_to_triplestore(g, post_uri):
         log_msg = 'INSERTed {} triples into triplestore'.format(len(g))
         logging.debug(log_msg)
         print(log_msg)
-        return True
     except requests.ConnectionError as e:
         logging.info(str(e))
         exit(1)
 
 
 if __name__ == '__main__':
+    # setup logging
     logging.basicConfig(filename='crawler.log', level=logging.INFO)
-    crawl_register('http://localhost:5000/address/?per_page=10000&page=1')
 
+    # set up command line arg parser
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        'uri',
+        type=str,
+        help='The crawler starting point URI.'
+    )
+    parser.add_argument(
+        'destination',
+        type=str,
+        help='Where to store the RDF: if a string starting http:// is given, an attempt will be made to POST a '
+             'SPARQL INSERT DATA command there. If another string, a local file will be created with that name '
+             'and turtle saved into it.'
+    )
+    parser.add_argument(
+        '-u',
+        action="store",
+        type=str,
+        help='A username if a secured SPARQL endpoint is used',
+        default=None
+    )
+    parser.add_argument(
+        '-p',
+        action="store",
+        type=str,
+        help='A password if a secured SPARQL endpoint is used',
+        default=None
+    )
+
+    args = parser.parse_args()
+
+    # # start crawling from given URI
+    crawl_register(args.uri)
     logging.info('Total URIs found in register: {}'.format(len(URIS)))
 
-    # for each URI in URIs, get it's RDF
-    for uri in URIS:
-        print('Trying to insert from {}'.format(uri))
-        post_triples_to_triplestore(get_graph_from_uri(uri), 'http://localhost:3030/gnaf/update')
+    # save locally or POST to SPARQL endpoint
+    if not args.destination.startswith('http://'):
+        with open(args.destination, 'a') as f:
+            for uri in URIS:
+                print('Trying to save RDF from {}'.format(uri))
+                f.write(get_graph_from_uri(uri).serialize(format='nt').decode('utf-8'))
+    else:  # POST to a SPARQL endpoint
+        # make an HTTP session then, for each URI in URIs, get it's RDF and POST it
+        s = requests.Session()
+        if args.usr is not None and args.pwd is not None:
+            s.auth = (args.usr, args.pwd)
+        s.headers.update({'Accept': 'text/turtle'})
+        for uri in URIS:
+            print('Trying to insert from {}'.format(uri))
+            post_triples_to_sparql_endpoint(get_graph_from_uri(uri), args.destination, s)
