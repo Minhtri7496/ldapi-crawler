@@ -1,3 +1,5 @@
 # Jetbrains
 .idea/
 
+# Passwords file
+passwords.py

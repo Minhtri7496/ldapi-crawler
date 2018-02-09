@@ -1,4 +1,7 @@
+import sys
+import logging
 import requests
+import requests.exceptions
 import rdflib
 
 
@@ -47,12 +50,15 @@ def get_next_page_uri(g):
 
 
 def crawl_register(register_uri):
+    m = 'Crawling from {}'.format(register_uri)
+    logging.info(m)
+    print(m)
     # start by loading the register URIs
     g = get_graph_from_uri(register_uri)
 
     # get the containedItemClass URIs from this Register/Page, regardless of if there are more Pages or not
     URIS.extend(get_contained_item_class_uris(g))
-    print('Added {} URIs to the list from Page {}'.format(len(URIS), register_uri))
+    logging.info('Added {} URIs to the list from Page {}'.format(len(URIS), register_uri))
 
     # check to see if this register is paging
     q = '''
@@ -72,11 +78,6 @@ def crawl_register(register_uri):
         # if there is another page, load that
         p = get_next_page_uri(g)
         while p:
-            #
-            # length limiter for testing
-            #
-            if len(URIS) > 200:
-                break
             g = crawl_register_page(p)
             p = get_next_page_uri(g)
 
@@ -87,20 +88,43 @@ def crawl_register_page(register_page_uri):
     URIS.extend(get_contained_item_class_uris(g))
     end_length = len(URIS)
 
-    print('Added {} URIs to the list from Page {}'.format(end_length - start_length, register_page_uri))
+    m = 'Added {} URIs to the list from Page {}'.format(end_length - start_length, register_page_uri)
+    logging.info(m)
+    print(m)
     return g
 
 
+def post_triples_to_triplestore(g, post_uri):
+    ntriples = g.serialize(format='ntriples')
+    sparql_insert = 'INSERT DATA\n{{\n{}}}'.format(
+        '\n'.join(['\t' + line for line in ntriples.decode('utf-8').splitlines()]))  # nice SPARQL formatting
+
+    # POST the SPARQL to the Fuseki endpoint
+    auth = (None, None)
+    headers = {'Accept': 'text/turtle'}
+    try:
+        r = requests.post(post_uri, headers=headers, data=sparql_insert, auth=auth, timeout=1)
+        if 200 > r.status_code > 300:
+            print(r.status_code)
+            m = 'The INSERT was not successful. The SPARQL _database\' error message is: {}'.format(r.content)
+            logging.info(str(m))
+            raise requests.exceptions.ConnectionError(m)
+        log_msg = 'INSERTed {} triples into triplestore'.format(len(g))
+        logging.debug(log_msg)
+        print(log_msg)
+        return True
+    except requests.ConnectionError as e:
+        logging.info(str(e))
+        exit(1)
+
+
 if __name__ == '__main__':
-    crawl_register('http://localhost:5000/address/')
+    logging.basicConfig(filename='crawler.log', level=logging.INFO)
+    crawl_register('http://localhost:5000/address/?per_page=10000&page=1')
 
-    print('Total URIs: {}'.format(len(URIS)))
-
-    print(URIS[:10])
+    logging.info('Total URIs found in register: {}'.format(len(URIS)))
 
     # for each URI in URIs, get it's RDF
-    master_graph = rdflib.Graph()
     for uri in URIS:
-        master_graph += get_graph_from_uri(uri)
-
-        print(len(master_graph))
+        print('Trying to insert from {}'.format(uri))
+        post_triples_to_triplestore(get_graph_from_uri(uri), 'http://localhost:3030/gnaf/update')
