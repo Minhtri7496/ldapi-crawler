@@ -4,6 +4,7 @@ import requests
 import requests.exceptions
 import rdflib
 import argparse
+import settings
 
 
 def crawl_ldapi(register_uri):
@@ -47,6 +48,7 @@ def get_next_page_uri(g):
     return None
 
 
+# TODO: extend to crawling Register of Registers
 def crawl_register(register_uri, reg_file):
     global uri_cache
     '''
@@ -63,9 +65,12 @@ def crawl_register(register_uri, reg_file):
     print(m)
 
     # page through the register, storing results in register files
-    URI_CACHE_MAX_LENGTH = 30
     page_uri = register_uri  # first page
+    i = 0
     while True:
+        # i += 1      # TESTING only go for 20 pages
+        # if i > 20:  # TESTING only go for 20 pages
+        #     break   # TESTING only go for 20 pages
         # get the page's URIs
         m = 'Crawling page {}'.format(page_uri)
         logging.info(m)
@@ -74,9 +79,10 @@ def crawl_register(register_uri, reg_file):
         # add the URIs to the cache
         uri_cache.extend(get_contained_item_class_uris(g))
         # if the cache is greater or equal to the max allowed cache size, append it to the reg file then empty it
-        if len(uri_cache) >= URI_CACHE_MAX_LENGTH:
+        if len(uri_cache) >= settings.URI_CACHE_MAX_LENGTH:
             with open(reg_file, 'a') as f:
                 f.write('\n'.join(uri_cache))
+                f.write('\n')
             uri_cache.clear()
 
         # check if there's another page, if not, break, we are done else iterate to next page
@@ -106,22 +112,23 @@ def crawl_instances_from_reg_file(reg_file, destination):
     last_uri_crawled = None
     try:  # write data to local files
         if not destination.startswith('http'):
-            DATA_FILE_LENGTH_MAX = 4
             data_file_stem = 'data-'
             data_file_count = 0
             with open(reg_file, 'r') as f:
-                # every 10,000 URIs, create a new file
+                # every DATA_FILE_LENGTH_MAX URIs, create a new file
                 for idx, uri in enumerate(f.readlines()):
-                    last_uri_crawled = uri
-                    # every 10,000th URI, create a new destination file
-                    if (idx + 1) % DATA_FILE_LENGTH_MAX == 0:
+                    last_uri_crawled = uri.strip()
+                    # every DATA_FILE_LENGTH_MAXth URI, create a new destination file
+                    if (idx + 1) % settings.DATA_FILE_LENGTH_MAX == 0:
                         data_file_count += 1
-                    with open(data_file_stem + data_file_count.zfill(4) + '.nt', 'a') as fl:
-                        print('Saving RDF from {} to {}'.format(
-                            uri,
-                            data_file_stem + data_file_count.zfill(4) + '.nt')
+                    with open(data_file_stem + str(data_file_count).zfill(4) + '.nt', 'a') as fl:
+                        m = 'Saving RDF from {} to {}'.format(
+                            last_uri_crawled,
+                            data_file_stem + str(data_file_count).zfill(4) + '.nt'
                         )
-                        fl.write(get_graph_from_uri(uri).serialize(format='nt').decode('utf-8'))
+                        logging.info(m)
+                        print(m)
+                        fl.write(get_graph_from_uri(last_uri_crawled).serialize(format='nt').decode('utf-8'))
         else:  # POST data to a SPARQL endpoint
             # make an HTTP session then, for each URI in URIs, get it's RDF and POST it
             s = requests.Session()
@@ -130,16 +137,17 @@ def crawl_instances_from_reg_file(reg_file, destination):
             s.headers.update({'Accept': 'text/turtle'})
             with open(reg_file, 'r') as f:
                 for idx, uri in enumerate(f.readlines()):
-                    last_uri_crawled = uri
-                    print('POSTing RDF from {} to {}'.format(uri, args.destination))
-                    post_triples_to_sparql_endpoint(get_graph_from_uri(uri), args.destination, s)
+                    last_uri_crawled = uri.strip()
+                    print('POSTing RDF from {} to {}'.format(last_uri_crawled, args.destination))
+                    post_triples_to_sparql_endpoint(get_graph_from_uri(last_uri_crawled), args.destination, s)
 
         # this reg file has been crawled, so delete it
         os.unlink(reg_file)
+        logging.info('Register file {} deleted as crawl complete'.format(reg_file))
     except Exception as e:
         logging.error(e)
     finally:
-        # write last URI retrieved to file
+        # write last URI successfully retrieved to a file
         with open('last_uri_crawled.txt', 'w') as f:
             f.write(last_uri_crawled)
 
@@ -162,7 +170,7 @@ def post_triples_to_sparql_endpoint(g, post_uri, session):
 
 if __name__ == '__main__':
     # setup logging
-    logging.basicConfig(filename='results.log', level=logging.INFO)
+    logging.basicConfig(filename='results.log', level=logging.INFO)  # logging.basicConfig(format='%(asctime)s %(message)s')
 
     # set up command line arg parser
     parser = argparse.ArgumentParser()
@@ -199,7 +207,7 @@ if __name__ == '__main__':
     reg_file = 'register.txt'
     uri_cache = []
     crawl_register(args.uri, reg_file)
-    logging.info('All register URIs stored in files starting \'{}\''.format(reg_file))
+    logging.info('All register URIs stored in file \'{}\''.format(reg_file))
 
     # crawl each instance URI stored in register cache files
     crawl_instances_from_reg_file(reg_file, args.destination)
