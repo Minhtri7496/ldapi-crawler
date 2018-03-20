@@ -187,6 +187,13 @@ if __name__ == '__main__':
              'and n-triples RDF saved into it.'
     )
     parser.add_argument(
+        'crawl_type',
+        type=str,
+        help='Whether to craw indexes only or also content',
+        default='content',
+        choices=('index', 'content')
+    )
+    parser.add_argument(
         '-u',
         action="store",
         type=str,
@@ -209,7 +216,8 @@ if __name__ == '__main__':
     crawl_register(args.uri, reg_file)
     logging.info('All register URIs stored in file \'{}\''.format(reg_file))
 
-    # crawl each instance URI stored in register cache files
-    crawl_instances_from_reg_file(reg_file, args.destination)
+    if args.crawl_type == 'content':
+        # crawl each instance URI stored in register cache files
+        crawl_instances_from_reg_file(reg_file, args.destination)
 
     print('crawl completed')
